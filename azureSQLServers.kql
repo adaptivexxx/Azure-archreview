@@ -1,7 +1,7 @@
-// Azure SQL Server misconfiguration report
 resources
 | where type == "microsoft.sql/servers"
-| project 
+| project
+    resourceId = tolower(id),
     ServerName = name,
     ResourceGroup = resourceGroup,
     SubscriptionId = subscriptionId,
@@ -13,14 +13,17 @@ resources
 | join kind=leftouter (
     resources
     | where type == "microsoft.sql/servers/securityalertpolicies"
-    | project ServerId = tolower(tostring(id)), DefenderStatus = properties.state
-) on $left.id == $right.ServerId
+    | project 
+        resourceId = tolower(substring(id, 0, indexof(id, "/securityalertpolicies"))),
+        DefenderStatus = properties.state
+) on resourceId
 | join kind=leftouter (
     resources
     | where type == "microsoft.sql/servers/encryptionprotector"
-    | project ServerId = tolower(tostring(id)), EncryptionType = properties.serverKeyType
-) on $left.id == $right.ServerId
-| project-away id, ServerId, ServerId1
+    | project 
+        resourceId = tolower(substring(id, 0, indexof(id, "/encryptionprotector"))),
+        EncryptionType = properties.serverKeyType
+) on resourceId
 | extend Misconfigurations = pack_array(
     iff(PublicAccess == "Enabled", "PublicNetworkAccessEnabled", ""),
     iff(MinimalTlsVersion != "1.2", "OutdatedTLSVersion", ""),
