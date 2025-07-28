@@ -1,0 +1,10 @@
+// SQL Servers without AAD-only authentication
+resources
+| where type == "microsoft.sql/servers"
+| extend aadOnlyAuth = properties.azureAdOnlyAuthentication
+| where isnull(aadOnlyAuth) or aadOnlyAuth == false
+| project 
+    ServerName = name,
+    ResourceGroup = resourceGroup,
+    SubscriptionId = subscriptionId,
+    AADOnlyEnabled = aadOnlyAuth
