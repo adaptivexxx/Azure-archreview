@@ -1,0 +1,14 @@
+resources
+| where type == "microsoft.sql/servers"
+| where properties.publicNetworkAccess == "Enabled"
+| extend firewallRules = properties.firewallRules
+| mv-expand firewallRules
+| where firewallRules.startIpAddress == "0.0.0.0" and firewallRules.endIpAddress == "255.255.255.255"
+| project
+    ServerName = name,
+    ResourceGroup = resourceGroup,
+    SubscriptionId = subscriptionId,
+    PublicAccess = properties.publicNetworkAccess,
+    FirewallRuleName = firewallRules.name,
+    StartIP = firewallRules.startIpAddress,
+    EndIP = firewallRules.endIpAddress
