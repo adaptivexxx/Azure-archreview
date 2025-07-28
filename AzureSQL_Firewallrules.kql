@@ -1,31 +1,31 @@
 resources
-| where type == "microsoft.sql/servers/firewallrules"
-| extend
-    ServerName = tostring(split(id, "/")[8]),
-    RuleType = case(
-        name startswith "AllowAllWindowsAzureIps", "Azure Services",
-        name startswith "ClientIPAddress", "Single IP",
-        properties.startIpAddress == "0.0.0.0" and properties.endIpAddress == "255.255.255.255", "Open to Internet",
-        "Custom Range"
-    ),
-    PublicAccess = toscalar(
-        resources
-        | where type == "microsoft.sql/servers"
-        | where id == substring(id, 0, indexof(id, "/firewallrules"))
-        | project properties.publicNetworkAccess
-    )
+| where type == "microsoft.sql/servers"
+| project
+    serverId = id,
+    serverName = name,
+    resourceGroup,
+    subscriptionId,
+    publicNetworkAccess = properties.publicNetworkAccess
+| join kind=inner (
+    resources
+    | where type == "microsoft.sql/servers/firewallrules"
+    | project
+        serverId = tolower(substring(id, 0, indexof(id, "/firewallrules"))),
+        ruleName = name,
+        startIp = properties.startIpAddress,
+        endIp = properties.endIpAddress
+) on serverId
 | project
     SubscriptionId = subscriptionId,
     ResourceGroup = resourceGroup,
-    ServerName,
-    RuleName = name,
-    RuleType,
-    StartIP = properties.startIpAddress,
-    EndIP = properties.endIpAddress,
-    PublicNetworkAccess = PublicAccess,
+    ServerName = serverName,
+    PublicAccess = publicNetworkAccess,
+    FirewallRuleName = ruleName,
+    StartIP = startIp,
+    EndIP = endIp,
     RiskLevel = case(
-        RuleType == "Open to Internet", "Critical",
-        RuleType == "Azure Services" and PublicAccess == "Enabled", "High",
+        startIp == "0.0.0.0" and endIp == "255.255.255.255", "Critical",
+        startIp == endIp, "Low",
         "Medium"
     )
-| order by RiskLevel desc, SubscriptionId, ResourceGroup, ServerName
+| order by RiskLevel desc, SubscriptionId, ResourceGroup
