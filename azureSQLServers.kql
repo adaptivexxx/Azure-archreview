@@ -1,0 +1,33 @@
+// Azure SQL Server misconfiguration report
+resources
+| where type == "microsoft.sql/servers"
+| project 
+    ServerName = name,
+    ResourceGroup = resourceGroup,
+    SubscriptionId = subscriptionId,
+    Location = location,
+    PublicAccess = properties.publicNetworkAccess,
+    MinimalTlsVersion = properties.minimalTlsVersion,
+    AADOnlyAuth = properties.azureAdOnlyAuthentication,
+    Version = properties.version
+| join kind=leftouter (
+    resources
+    | where type == "microsoft.sql/servers/securityalertpolicies"
+    | project ServerId = tolower(tostring(id)), DefenderStatus = properties.state
+) on $left.id == $right.ServerId
+| join kind=leftouter (
+    resources
+    | where type == "microsoft.sql/servers/encryptionprotector"
+    | project ServerId = tolower(tostring(id)), EncryptionType = properties.serverKeyType
+) on $left.id == $right.ServerId
+| project-away id, ServerId, ServerId1
+| extend Misconfigurations = pack_array(
+    iff(PublicAccess == "Enabled", "PublicNetworkAccessEnabled", ""),
+    iff(MinimalTlsVersion != "1.2", "OutdatedTLSVersion", ""),
+    iff(isnull(AADOnlyAuth) or AADOnlyAuth == false, "AADOnlyAuthDisabled", ""),
+    iff(DefenderStatus != "Enabled", "DefenderForSQLDisabled", ""),
+    iff(EncryptionType != "AzureKeyVault", "NonAKVEncryption", "")
+)
+| extend MisconfigurationCount = array_length(array_filter(Misconfigurations, x => x != ""))
+| where MisconfigurationCount > 0
+| order by MisconfigurationCount desc
