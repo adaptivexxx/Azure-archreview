@@ -1,0 +1,11 @@
+resources
+| where type == "microsoft.sql/servers"
+| where properties.publicNetworkAccess == "Enabled"
+| project
+    ['Server Name'] = name,
+    ['Resource Group'] = resourceGroup,
+    ['Subscription ID'] = subscriptionId,
+    ['Public Access'] = properties.publicNetworkAccess,
+    ['Minimum TLS Version'] = properties.minimalTlsVersion,
+    ['Recommendation'] = "Disable public network access or configure Private Endpoint"
+| order by ['Subscription ID'], ['Resource Group'], ['Server Name'] asc
