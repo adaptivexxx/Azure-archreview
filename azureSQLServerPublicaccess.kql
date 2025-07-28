@@ -1,0 +1,11 @@
+resources
+| where type == "microsoft.sql/servers"
+| project
+    ServerName = name,
+    ResourceGroup = resourceGroup,
+    SubscriptionId = subscriptionId,
+    PublicNetworkAccess = properties.publicNetworkAccess,
+    MinimalTlsVersion = properties.minimalTlsVersion,
+    RestrictOutboundNetworkAccess = properties.restrictOutboundNetworkAccess
+| where PublicNetworkAccess == "Enabled"
+| order by SubscriptionId, ResourceGroup, ServerName asc
