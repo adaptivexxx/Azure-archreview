@@ -1,0 +1,31 @@
+resources
+| where type == "microsoft.sql/servers/firewallrules"
+| extend
+    ServerName = tostring(split(id, "/")[8]),
+    RuleType = case(
+        name startswith "AllowAllWindowsAzureIps", "Azure Services",
+        name startswith "ClientIPAddress", "Single IP",
+        properties.startIpAddress == "0.0.0.0" and properties.endIpAddress == "255.255.255.255", "Open to Internet",
+        "Custom Range"
+    ),
+    PublicAccess = toscalar(
+        resources
+        | where type == "microsoft.sql/servers"
+        | where id == substring(id, 0, indexof(id, "/firewallrules"))
+        | project properties.publicNetworkAccess
+    )
+| project
+    SubscriptionId = subscriptionId,
+    ResourceGroup = resourceGroup,
+    ServerName,
+    RuleName = name,
+    RuleType,
+    StartIP = properties.startIpAddress,
+    EndIP = properties.endIpAddress,
+    PublicNetworkAccess = PublicAccess,
+    RiskLevel = case(
+        RuleType == "Open to Internet", "Critical",
+        RuleType == "Azure Services" and PublicAccess == "Enabled", "High",
+        "Medium"
+    )
+| order by RiskLevel desc, SubscriptionId, ResourceGroup, ServerName
