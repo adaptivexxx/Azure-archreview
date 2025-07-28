@@ -3,12 +3,12 @@
 resources
 | where type == "microsoft.storage/storageaccounts"
 | extend
-    properties.networkAcls,
-    properties.allowSharedKeyAccess,
-    properties.supportsHttpsTrafficOnly,
-    properties.minimumTlsVersion,
-    properties.allowBlobPublicAccess,
-    properties.isHnsEnabled
+    networkAcls = properties.networkAcls,
+    allowSharedKeyAccess = properties.allowSharedKeyAccess,
+    supportsHttpsTrafficOnly = properties.supportsHttpsTrafficOnly,
+    minimumTlsVersion = properties.minimumTlsVersion,
+    allowBlobPublicAccess = properties.allowBlobPublicAccess,
+    isHnsEnabled = properties.isHnsEnabled
 | project
     name,
     resourceGroup,
@@ -32,7 +32,6 @@ resources
     // Data Protection
     blobPublicAccess = iff(isnull(allowBlobPublicAccess), "Unknown", iff(allowBlobPublicAccess, "Enabled", "Disabled")),
     hierarchicalNamespace = iff(isHnsEnabled, "Enabled", "Disabled")
-    
 | where 
     publicNetworkAccess == "Public" or
     sharedKeyAccess == "Enabled" or
