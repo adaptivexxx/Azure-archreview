@@ -1,21 +1,19 @@
 //Storage Account Misconfiguration Detection Using Azure Resource Graph Explorer
-
 resources
 | where type == "microsoft.storage/storageaccounts"
 | extend
     networkAcls = properties.networkAcls,
     allowSharedKeyAccess = tostring(properties.allowSharedKeyAccess),
-    supportsHttpsTrafficOnly = properties.supportsHttpsTrafficOnly,
+    supportsHttpsTrafficOnly = tostring(properties.supportsHttpsTrafficOnly),
     minimumTlsVersion = properties.minimumTlsVersion,
     allowBlobPublicAccess = tostring(properties.allowBlobPublicAccess),
-    isHnsEnabled = properties.isHnsEnabled
+    isHnsEnabled = tostring(properties.isHnsEnabled)
 | project
     name,
     resourceGroup,
     subscriptionId,
     kind,
     sku = sku.name,
-    
     // Network Security
     publicNetworkAccess = iff(networkAcls.defaultAction == "Allow", "Public", "Restricted"),
     ipRestrictions = iff(isnotempty(networkAcls.ipRules), "Enabled", "None"),
@@ -27,18 +25,24 @@ resources
         allowSharedKeyAccess == "true", "Enabled",
         "Disabled"),
     // Encryption & TLS
-    httpsOnly = iff(supportsHttpsTrafficOnly, "Enabled", "Disabled"),
+    httpsOnly = case(
+        isempty(supportsHttpsTrafficOnly), "Unknown",
+        supportsHttpsTrafficOnly == "true", "Enabled",
+        "Disabled"),
     tlsVersion = minimumTlsVersion,
     // Data Protection
     blobPublicAccess = case(
         isempty(allowBlobPublicAccess), "Unknown",
         allowBlobPublicAccess == "true", "Enabled",
         "Disabled"),
-    hierarchicalNamespace = iff(isHnsEnabled, "Enabled", "Disabled")
+    hierarchicalNamespace = case(
+        isempty(isHnsEnabled), "Unknown",
+        isHnsEnabled == "true", "Enabled",
+        "Disabled")
 | where 
     publicNetworkAccess == "Public" or
     sharedKeyAccess == "Enabled" or
     httpsOnly == "Disabled" or
-    tolower(tlsVersion) != "tls1_2" or
+    (isnotempty(tlsVersion) and tolower(tlsVersion) != "tls1_2") or
     blobPublicAccess == "Enabled"
 | order by publicNetworkAccess desc, name asc
