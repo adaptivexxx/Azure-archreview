@@ -4,8 +4,9 @@ resources
 | join kind=leftouter (
     resources
     | where type == "microsoft.sql/servers/azureadonlyauthentications"
-    | project serverId = tolower(tostring(properties.azureAdOnlyAuthentication)), $left.id == $right.serverId
-| extend aadOnlyEnabled = case(isnotempty(azureAdOnlyAuthentication), tobool(azureAdOnlyAuthentication), false)
+    | project serverId = tolower(id), azureAdOnlyAuthentication = tobool(properties.azureAdOnlyAuthentication)
+) on $left.id == $right.serverId
+| extend aadOnlyEnabled = case(isnotempty(azureAdOnlyAuthentication), azureAdOnlyAuthentication, false)
 | where aadOnlyEnabled == false
 | project 
     ServerName = name,
