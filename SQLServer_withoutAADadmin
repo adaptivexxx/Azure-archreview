@@ -1,0 +1,9 @@
+// SQL Servers without AAD admin configured
+resources
+| where type == "microsoft.sql/servers"
+| extend aadAdmin = properties.administrators
+| where isnull(aadAdmin) or isempty(aadAdmin)
+| project 
+    ServerName = name,
+    ResourceGroup = resourceGroup,
+    SubscriptionId = subscriptionId
