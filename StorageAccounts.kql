@@ -4,10 +4,10 @@ resources
 | where type == "microsoft.storage/storageaccounts"
 | extend
     networkAcls = properties.networkAcls,
-    allowSharedKeyAccess = properties.allowSharedKeyAccess,
+    allowSharedKeyAccess = tostring(properties.allowSharedKeyAccess),
     supportsHttpsTrafficOnly = properties.supportsHttpsTrafficOnly,
     minimumTlsVersion = properties.minimumTlsVersion,
-    allowBlobPublicAccess = properties.allowBlobPublicAccess,
+    allowBlobPublicAccess = tostring(properties.allowBlobPublicAccess),
     isHnsEnabled = properties.isHnsEnabled
 | project
     name,
@@ -21,16 +21,19 @@ resources
     ipRestrictions = iff(isnotempty(networkAcls.ipRules), "Enabled", "None"),
     vnetRestrictions = iff(isnotempty(networkAcls.virtualNetworkRules), "Enabled", "None"),
     bypass = networkAcls.bypass,
-    
     // Authentication
-    sharedKeyAccess = iff(isnull(allowSharedKeyAccess), "Unknown", iff(allowSharedKeyAccess, "Enabled", "Disabled")),
-    
+    sharedKeyAccess = case(
+        isempty(allowSharedKeyAccess), "Unknown",
+        allowSharedKeyAccess == "true", "Enabled",
+        "Disabled"),
     // Encryption & TLS
     httpsOnly = iff(supportsHttpsTrafficOnly, "Enabled", "Disabled"),
     tlsVersion = minimumTlsVersion,
-    
     // Data Protection
-    blobPublicAccess = iff(isnull(allowBlobPublicAccess), "Unknown", iff(allowBlobPublicAccess, "Enabled", "Disabled")),
+    blobPublicAccess = case(
+        isempty(allowBlobPublicAccess), "Unknown",
+        allowBlobPublicAccess == "true", "Enabled",
+        "Disabled"),
     hierarchicalNamespace = iff(isHnsEnabled, "Enabled", "Disabled")
 | where 
     publicNetworkAccess == "Public" or
