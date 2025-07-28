@@ -1,9 +1,14 @@
-// SQL Servers without AAD admin configured
 resources
 | where type == "microsoft.sql/servers"
-| extend aadAdmin = properties.administrators
-| where isnull(aadAdmin) or isempty(aadAdmin)
+| project id, name, resourceGroup, subscriptionId
+| join kind=leftouter (
+    resources
+    | where type == "microsoft.sql/servers/azureadonlyauthentications"
+    | project serverId = tolower(tostring(properties.azureAdOnlyAuthentication)), $left.id == $right.serverId
+| extend aadOnlyEnabled = case(isnotempty(azureAdOnlyAuthentication), tobool(azureAdOnlyAuthentication), false)
+| where aadOnlyEnabled == false
 | project 
     ServerName = name,
     ResourceGroup = resourceGroup,
-    SubscriptionId = subscriptionId
+    SubscriptionId = subscriptionId,
+    AADOnlyEnabled = aadOnlyEnabled
