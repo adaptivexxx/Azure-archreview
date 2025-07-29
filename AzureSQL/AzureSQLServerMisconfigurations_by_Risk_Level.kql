@@ -1,17 +1,82 @@
-SecurityResources
-| where type == "microsoft.security/assessments"
-| extend assessmentId = name, assessmentDisplayName = properties.displayName
-| extend resourceId = properties.resourceDetails.id
-| where resourceId has "Microsoft.Sql/servers"
-| extend status = tostring(properties.status.code), severity = tostring(properties.metadata.severity)
-| where status == "Unhealthy" and severity in ("High", "Medium", "Critical")
-| project
-    resourceId,
-    assessmentDisplayName,
-    severity,
-    status,
+let sqlServers = resources
+| where type == "microsoft.sql/servers"
+| extend props = parse_json(properties)
+| project 
+    serverName = name,
+    location,
     subscriptionId,
-    assessmentId,
-    assessmentType = properties.metadata.assessmentType,
-    source = properties.source
-| order by severity desc
+    resourceGroup,
+    identityType = tostring(identity.type),
+    minimalTlsVersion = tostring(props.minimalTlsVersion),
+    publicNetworkAccess = tostring(props.publicNetworkAccess),
+    administratorLogin = tostring(props.administratorLogin),
+    TLSVersionCheck = iff(minimalTlsVersion == "1.0" or isempty(minimalTlsVersion), "TLS 1.0 or not set", "OK"),
+    PublicAccessCheck = iff(publicNetworkAccess == "Enabled", "Public access enabled", "OK"),
+    IdentityCheck = iff(identityType == "None" or isempty(identityType), "No managed identity", "OK");
+
+// Step 2: Check Firewall Rules (open to all)
+let firewallFindings = resources
+| where type == "microsoft.sql/servers/firewallrules"
+| extend props = parse_json(properties)
+| extend 
+    serverName = tostring(split(id, '/')[8]),
+    startIp = tostring(props.startIpAddress),
+    endIp = tostring(props.endIpAddress),
+    FirewallOpenToAll = case(
+        startIp == "0.0.0.0" and endIp == "255.255.255.255", "Open to all IPs",
+        startIp == "0.0.0.0" and endIp == "0.0.0.0", "Allow Azure services (0.0.0.0)",
+        isempty(startIp) or isempty(endIp), "Missing IPs",
+        "OK"
+    )
+| summarize FirewallOpenToAll = any(FirewallOpenToAll) by serverName;
+
+// Step 3: Auditing Config
+let auditFindings = resources
+| where type == "microsoft.sql/servers/databases/auditingSettings"
+| extend props = parse_json(properties)
+| extend 
+    auditState = tostring(props.state),
+    serverName = tostring(split(id, '/')[8]),
+    AuditCheck = iff(auditState == "Enabled", "✅ OK", "❌ Auditing not enabled")
+| summarize AuditCheck = any(AuditCheck) by serverName;
+
+// Step 4: TDE
+let tdeFindings = resources
+| where type endswith "transparentDataEncryption"
+| extend props = parse_json(properties)
+| extend 
+    tdeState = tostring(props.status),
+    serverName = tostring(split(id, '/')[8]),
+    TDECheck = iff(tdeState == "Enabled", "OK", "TDE not enabled")
+| summarize TDECheck = any(TDECheck) by serverName;
+
+// Step 5: Threat Detection
+let threatFindings = resources
+| where type endswith "securityAlertPolicies"
+| extend props = parse_json(properties)
+| extend 
+    threatState = tostring(props.state),
+    serverName = tostring(split(id, '/')[8]),
+    ThreatDetectionCheck = iff(threatState == "Enabled", "OK", "Threat detection not enabled")
+| summarize ThreatDetectionCheck = any(ThreatDetectionCheck) by serverName;
+
+// Final Join & Report
+sqlServers
+| join kind=leftouter firewallFindings on serverName
+| join kind=leftouter auditFindings on serverName
+| join kind=leftouter tdeFindings on serverName
+| join kind=leftouter threatFindings on serverName
+| project 
+    serverName,
+    location,
+    subscriptionId,
+    resourceGroup,
+    administratorLogin,
+    TLSVersionCheck,
+    PublicAccessCheck,
+    IdentityCheck,
+    FirewallOpenToAll = coalesce(FirewallOpenToAll, "No rule info"),
+    AuditCheck = coalesce(AuditCheck, "No auditing config"),
+    TDECheck = coalesce(TDECheck, "No TDE config"),
+    ThreatDetectionCheck = coalesce(ThreatDetectionCheck, "No threat config")
+| order by serverName asc
