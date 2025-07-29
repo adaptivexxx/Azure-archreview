@@ -1,0 +1,4 @@
+resources
+| where type == "microsoft.storage/storageaccounts"
+| extend d = parse_json(properties)
+| project name,publicNetworkAccessstatus = d.publicNetworkAccess
