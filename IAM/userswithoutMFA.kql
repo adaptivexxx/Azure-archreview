@@ -1,0 +1,6 @@
+resources
+| where type == "microsoft.aadiam/conditionalaccess/policies"
+| extend props = parse_json(properties)
+| project policyName = name, enabled = tostring(props.state),
+         controls = tostring(props.conditions.clientAppTypes)
+| where enabled == "enabled"
