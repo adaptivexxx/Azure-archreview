@@ -1,0 +1,17 @@
+SecurityResources
+| where type == "microsoft.security/assessments"
+| extend assessmentId = name, assessmentDisplayName = properties.displayName
+| extend resourceId = properties.resourceDetails.id
+| where resourceId has "Microsoft.Sql/servers"
+| extend status = tostring(properties.status.code), severity = tostring(properties.metadata.severity)
+| where status == "Unhealthy" and severity in ("High", "Medium", "Critical")
+| project
+    resourceId,
+    assessmentDisplayName,
+    severity,
+    status,
+    subscriptionId,
+    assessmentId,
+    assessmentType = properties.metadata.assessmentType,
+    source = properties.source
+| order by severity desc
