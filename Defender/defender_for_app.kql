@@ -1,0 +1,8 @@
+securityresources
+| where type == "microsoft.security/pricings"
+| where name == "AppServices"
+| extend status = case(
+    properties.pricingTier == "Standard", "Enabled",
+    properties.pricingTier == "Free", "Disabled",
+    "Unknown")
+| project subscriptionId, name, status, pricingTier=properties.pricingTier
