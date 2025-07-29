@@ -1,0 +1,14 @@
+securityresources
+| where type == "microsoft.security/pricings"
+| where name == "AppServices"
+| extend status = case(
+    properties.pricingTier == "Standard", "Enabled",
+    properties.pricingTier == "Free", "Disabled",
+    "Unknown")
+| join (
+    resourcecontainers
+    | where type == "microsoft.resources/subscriptions"
+    | project subscriptionId, subscriptionName=name
+) on subscriptionId
+| project subscriptionId, subscriptionName, defenderPlan=name, status, pricingTier=properties.pricingTier
+| sort by subscriptionName asc
