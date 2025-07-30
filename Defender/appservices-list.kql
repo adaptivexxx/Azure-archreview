@@ -38,3 +38,28 @@ resources
 ) on subscriptionId
 | project subscriptionName, resourceGroup, appName, location, runtimeStack
 | order by subscriptionName, appName
+
+
+
+============
+resources
+| where type == 'microsoft.web/sites'
+| extend
+    linuxFx = tostring(properties.siteConfig.linuxFxVersion),
+    windowsFx = tostring(properties.siteConfig.windowsFxVersion),
+    netFrameworkVersion = tostring(properties.netFrameworkVersion),
+    phpVersion = tostring(properties.phpVersion),
+    pythonVersion = tostring(properties.pythonVersion),
+    nodeVersion = tostring(properties.nodeVersion),
+    javaVersion = tostring(properties.javaVersion),
+    kindVal = tostring(kind)
+| project subscriptionId, resourceGroup, appName = name, location,
+    kindVal,
+    runtimeStack = coalesce(linuxFx, windowsFx, netFrameworkVersion, phpVersion, pythonVersion, nodeVersion, javaVersion, "<unknown>")
+| join kind=inner (
+    resourcecontainers
+    | where type == 'microsoft.resources/subscriptions'
+    | project subscriptionId, subscriptionName = name
+) on subscriptionId
+| project subscriptionName, resourceGroup, appName, location, kindVal, runtimeStack
+| order by subscriptionName, appName
