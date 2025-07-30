@@ -13,3 +13,28 @@ resources
 ) on subscriptionId
 | project subscriptionName, resourceGroup, appName, location, runtimeStack
 | order by subscriptionName, appName
+
+
+
+
+
+===========
+resources
+| where type == 'microsoft.web/sites'
+| project
+    subscriptionId,
+    resourceGroup,
+    appName = name,
+    location,
+    runtimeStack = coalesce(
+        tostring(properties.siteConfig.linuxFxVersion),
+        tostring(properties.siteConfig.windowsFxVersion),
+        "<unknown>"
+    )
+| join kind=inner (
+    resourcecontainers
+    | where type == 'microsoft.resources/subscriptions'
+    | project subscriptionId, subscriptionName = name
+) on subscriptionId
+| project subscriptionName, resourceGroup, appName, location, runtimeStack
+| order by subscriptionName, appName
