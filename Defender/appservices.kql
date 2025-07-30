@@ -1,34 +1,23 @@
-let defenderDisabledSubs = 
-    securityresources
-    | where type == "microsoft.security/pricings"
-    | where name == "AppServices"
-    | where properties.pricingTier == "Free"
-    | project subscriptionId;
-
-resources
-| where type =~ 'microsoft.web/sites'
-| where subscriptionId in (defenderDisabledSubs)
-| extend publicAccess = case(
-    isempty(properties.hostNames[0]), "No public hostname",
-    tostring(properties.hostNameSslStates[0].hostType) == "Standard", "Publicly accessible",
-    "Unknown")
+securityresources
+| where type == "microsoft.security/pricings"
+| where name == "AppServices"
+| project subscriptionId, defenderStatus = properties.pricingTier
+| join kind=leftouter (
+    resources
+    | where type =~ 'microsoft.web/sites'
+    | summarize appServiceCount = count() by subscriptionId
+) on subscriptionId
 | join kind=inner (
     resourcecontainers
     | where type == "microsoft.resources/subscriptions"
     | project subscriptionId, subscriptionName=name
 ) on subscriptionId
-| project 
+| project
     subscriptionName,
-    appServiceName = name,
-    appServiceKind = kind,
-    location,
-    publicAccess,
-    httpsOnly = tobool(properties.httpsOnly),
-    clientCertEnabled = tobool(properties.clientCertEnabled),
-    inboundIpAddress = properties.inboundIpAddress,
-    possibleOutboundIpAddresses = properties.possibleOutboundIpAddresses,
-    lastModifiedTimeUtc = properties.lastModifiedTimeUtc,
-    siteConfig = pack("minTlsVersion", properties.siteConfig.minTlsVersion,
-                     "ftpsState", properties.siteConfig.ftpsState,
-                     "http20Enabled", properties.siteConfig.http20Enabled)
-| order by subscriptionName asc, publicAccess desc, appServiceName asc
+    defenderStatus = case(
+        defenderStatus == "Standard", "Enabled",
+        defenderStatus == "Free", "Disabled",
+        "NotConfigured"
+    ),
+    appServiceCount = iff(isnull(appServiceCount), 0, appServiceCount)
+| order by defenderStatus asc, appServiceCount desc
