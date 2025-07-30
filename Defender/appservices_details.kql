@@ -1,43 +1,40 @@
-// 1. Get Defender for App Services pricing tier
-securityresources
+let defenderInfo = securityresources
 | where type == "microsoft.security/pricings"
 | where name == "AppServices"
-| project subscriptionId, defenderStatus = tostring(properties.pricingTier)
+| project subscriptionId, defenderStatus = tostring(properties.pricingTier);
+
+resources
+| where type in~ ("microsoft.web/sites", "microsoft.web/serverfarms")
+| extend
+    isSite = type == "microsoft.web/sites",
+    isPlan = type == "microsoft.web/serverfarms",
+    siteName = iff(isSite, name, ""),
+    planId = iff(isSite, tostring(properties.serverFarmId), id),
+    runtimeStack = iff(isSite, tostring(properties.siteConfig.linuxFxVersion), ""),
+    skuTier = iff(isPlan, tostring(sku.tier), ""),
+    skuName = iff(isPlan, tostring(sku.name), "")
+| summarize
+    siteName = make_list(siteName),
+    runtimeStack = make_list(runtimeStack),
+    skuTier = make_list(skuTier),
+    skuName = make_list(skuName)
+    by subscriptionId, planId
+| mv-expand siteName to typeof(string), runtimeStack to typeof(string), skuTier to typeof(string), skuName to typeof(string)
+| join kind=leftouter (defenderInfo) on subscriptionId
 | join kind=inner (
-// 2. Get App Services and their plan & stack info in a single use of 'resources'
-    resources
-    | where type =~ 'microsoft.web/sites'
-    | extend 
-        appServiceName = name,
-        location = location,
-        resourceGroup = resourceGroup,
-        appServicePlanId = tostring(properties.serverFarmId),
-        runtimeStack = tostring(properties.siteConfig.linuxFxVersion)
-    | project subscriptionId, resourceGroup, appServiceName, location, appServicePlanId, runtimeStack
-) on subscriptionId
-| join kind=leftouter (
-// 3. Get App Service Plan details (SKU info) using same 'resources' table by filtering ID pattern
-    resources
-    | where type =~ 'microsoft.web/serverfarms'
-    | project appServicePlanId = id, skuTier = tostring(sku.tier), skuName = tostring(sku.name)
-) on appServicePlanId
-| join kind=inner (
-// 4. Get subscription names
     resourcecontainers
     | where type == "microsoft.resources/subscriptions"
     | project subscriptionId, subscriptionName = name
 ) on subscriptionId
 | project
     subscriptionName,
-    resourceGroup,
-    appServiceName,
-    location,
-    skuTier,
-    skuName,
-    runtimeStack,
+    siteName,
+    runtimeStack = iff(runtimeStack == "", "<Unknown>", runtimeStack),
+    skuTier = iff(skuTier == "", "<Unknown>", skuTier),
+    skuName = iff(skuName == "", "<Unknown>", skuName),
     defenderStatus = case(
         defenderStatus =~ "Standard", "Enabled",
         defenderStatus =~ "Free", "Disabled",
         "NotConfigured"
     )
-| order by defenderStatus asc, subscriptionName, appServiceName
+| order by subscriptionName, siteName
