@@ -1,34 +1,36 @@
-let defenderData = securityresources
-| where type == "microsoft.security/pricings"
-| where name == "AppServices"
-| project subscriptionId, rawStatus = properties.pricingTier;
-
-let appServiceData = resources
-| where type =~ 'microsoft.web/sites'
-| summarize 
-    appServiceCount = count(),
-    publicAppCount = countif(isnotempty(properties.hostNames) and properties.hostNameSslStates[0].hostType == "Standard")
-by subscriptionId;
-
-defenderData
-| join kind=leftouter (appServiceData) on subscriptionId
+resourcecontainers
+| where type == "microsoft.resources/subscriptions"
 | join kind=inner (
     resourcecontainers
-    | where type == "microsoft.resources/subscriptions"
-    | project subscriptionId, subscriptionName=name
+    | where type == "microsoft.resources/subscriptions/resourcegroups"
+    | project subscriptionId, resourceGroup = name
+) on subscriptionId
+| join kind=inner (
+    resources
+    | where type == "microsoft.web/sites"
+    | extend AppServiceName = name, location, AppServicePlanId = tostring(properties.serverFarmId)
+) on subscriptionId, resourceGroup
+| join kind=leftouter (
+    resourcecontainers
+    | where type == "microsoft.web/serverfarms"
+    | extend AppServicePlanId = id, SkuName = tostring(sku.name), SkuTier = tostring(sku.tier)
+    | project AppServicePlanId, SkuName, SkuTier
+) on AppServicePlanId
+| join kind=leftouter (
+    resources
+    | where type == "microsoft.security/pricings"
+    | where name == "AppServices"
+    | extend DefenderStatus = tostring(properties.pricingTier)
+    | project subscriptionId, DefenderStatus
 ) on subscriptionId
 | project
-    subscriptionName,
-    defenderStatus = iff(rawStatus == "Standard", "Enabled", 
-                   iff(rawStatus == "Free", "Disabled", 
-                   "NotConfigured")),
-    appServiceCount = iff(isnull(appServiceCount), 0, appServiceCount),
-    publicAppCount = iff(isnull(publicAppCount), 0, publicAppCount),
-    riskScore = case(
-        appServiceCount == 0, 0,
-        publicAppCount > 0 and rawStatus == "Free", 10,
-        publicAppCount > 0, 5,
-        rawStatus == "Free", 3,
-        1
-    )
-| order by riskScore desc, subscriptionName asc
+    subscriptionId,
+    resourceGroup,
+    AppServiceName,
+    location,
+    SkuName,
+    SkuTier,
+    DefenderStatus,
+    RuntimeStack = tostring(properties.siteConfig.linuxFxVersion)
+| summarize Count = count() by subscriptionId, resourceGroup, AppServiceName, location, SkuName, SkuTier, DefenderStatus, RuntimeStack
+| order by DefenderStatus desc, AppServiceName
