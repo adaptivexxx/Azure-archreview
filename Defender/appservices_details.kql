@@ -1,0 +1,58 @@
+securityresources
+| where type == "microsoft.security/pricings"
+| where name == "AppServices"
+| project subscriptionId, defenderStatus = properties.pricingTier
+| join kind=leftouter (
+    resources
+    | where type =~ 'microsoft.web/sites'
+    | extend 
+        publicAccess = case(
+            isempty(properties.hostNames), "NoPublicHostname",
+            properties.hostNameSslStates[0].hostType == "Standard", "PubliclyAccessible",
+            "InternalOnly"
+        ),
+        httpsOnly = tobool(properties.httpsOnly),
+        minTlsVersion = properties.siteConfig.minTlsVersion,
+        ftpsState = properties.siteConfig.ftpsState,
+        clientCertEnabled = tobool(properties.clientCertEnabled),
+        osType = properties.kind contains "linux" ? "Linux" : "Windows",
+        appServicePlan = tostring(split(id, "/")[8])
+    | summarize 
+        appServiceCount = count(),
+        publicAppServices = countif(publicAccess == "PubliclyAccessible"),
+        linuxApps = countif(osType == "Linux"),
+        windowsApps = countif(osType == "Windows"),
+        nonHttpsApps = countif(httpsOnly == false),
+        weakTlsApps = countif(minTlsVersion != "1.2"),
+        ftpsDisabled = countif(ftpsState != "FtpsOnly"),
+        appServicePlans = dcount(appServicePlan)
+        by subscriptionId
+) on subscriptionId
+| join kind=inner (
+    resourcecontainers
+    | where type == "microsoft.resources/subscriptions"
+    | project subscriptionId, subscriptionName=name
+) on subscriptionId
+| project
+    subscriptionName,
+    defenderStatus = case(
+        defenderStatus == "Standard", "Enabled",
+        defenderStatus == "Free", "Disabled",
+        "NotConfigured"
+    ),
+    appServiceCount = iff(isnull(appServiceCount), 0, appServiceCount),
+    publicAppServices = iff(isnull(publicAppServices), 0, publicAppServices),
+    linuxApps = iff(isnull(linuxApps), 0, linuxApps),
+    windowsApps = iff(isnull(windowsApps), 0, windowsApps),
+    nonHttpsApps = iff(isnull(nonHttpsApps), 0, nonHttpsApps),
+    weakTlsApps = iff(isnull(weakTlsApps), 0, weakTlsApps),
+    ftpsDisabled = iff(isnull(ftpsDisabled), 0, ftpsDisabled),
+    appServicePlans = iff(isnull(appServicePlans), 0, appServicePlans),
+    riskScore = case(
+        appServiceCount == 0, 0,
+        publicAppServices > 0 and defenderStatus == "Disabled", 10,
+        publicAppServices > 0, 5,
+        defenderStatus == "Disabled", 3,
+        1
+    )
+| order by riskScore desc, appServiceCount desc
