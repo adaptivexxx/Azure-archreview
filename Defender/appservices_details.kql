@@ -1,64 +1,53 @@
-// Get Defender for App Services status per subscription (VALIDATED)
+// Get Defender status
 let defenderStatus = securityresources
 | where type == "microsoft.security/pricings"
 | where name == "AppServices"
-| extend defenderStatus = iff(properties.pricingTier == "Standard", "Enabled",
-                       iff(properties.pricingTier == "Free", "Disabled",
-                       "NotConfigured"))
-| distinct subscriptionId, defenderStatus;
+| extend DefenderStatus = case(
+    tostring(properties.pricingTier) == "Standard", "Enabled",
+    tostring(properties.pricingTier) == "Free", "Disabled",
+    "NotConfigured")
+| project subscriptionId, DefenderStatus;
 
-// Get all App Services with basic security info
+// Get subscription names
+let subscriptions = resourcecontainers
+| where type == "microsoft.resources/subscriptions"
+| project subscriptionId, SubscriptionName=name;
+
+// Get App Service security details
 let appServices = resources
 | where type =~ 'microsoft.web/sites'
 | extend 
-    publicAccess = iff(isnotempty(properties.hostNames) and tostring(properties.hostNameSslStates[0].hostType) == "Standard", 
-        "Public", "Internal"),
-    httpsOnly = tobool(properties.httpsOnly),
-    minTlsVersion = tostring(properties.siteConfig.minTlsVersion)
-| project 
-    subscriptionId,
-    name,
-    resourceGroup,
-    kind,
-    location,
-    publicAccess,
-    httpsOnly,
-    minTlsVersion;
+    PublicAccess = iff(isnotempty(properties.hostNames) and 
+                  tostring(properties.hostNameSslStates[0].hostType) == "Standard",
+                  "Public", "Internal"),
+    HttpsOnly = tobool(properties.httpsOnly),
+    MinTlsVersion = tostring(properties.siteConfig.minTlsVersion)
+| project subscriptionId, PublicAccess, HttpsOnly, MinTlsVersion;
 
-// Combine the data
+// Combine all data
 defenderStatus
+| join kind=inner (subscriptions) on subscriptionId
 | join kind=leftouter (
     appServices
     | summarize 
-        appServiceCount = count(),
-        publicApps = countif(publicAccess == "Public"),
-        nonHttpsApps = countif(httpsOnly == false),
-        weakTlsApps = countif(minTlsVersion != "1.2")
-        by subscriptionId
+        AppServiceCount = count(),
+        PublicApps = countif(PublicAccess == "Public"),
+        NonHttpsApps = countif(HttpsOnly == false),
+        WeakTlsApps = countif(MinTlsVersion != "1.2")
+    by subscriptionId
 ) on subscriptionId
-| join kind=inner (
-    resourcecontainers
-    | where type == "microsoft.resources/subscriptions"
-    | project subscriptionId, subscriptionName=name
-) on subscriptionId
-| extend 
-    appServiceCount = iff(isnull(appServiceCount), 0, appServiceCount),
-    publicApps = iff(isnull(publicApps), 0, publicApps),
-    nonHttpsApps = iff(isnull(nonHttpsApps), 0, nonHttpsApps),
-    weakTlsApps = iff(isnull(weakTlsApps), 0, weakTlsApps),
-    riskScore = case(
-        appServiceCount == 0, 0,
-        publicApps > 0 and defenderStatus == "Disabled", 10,
-        publicApps > 0, 5,
-        defenderStatus == "Disabled", 3,
+| project 
+    SubscriptionName,
+    DefenderStatus,
+    TotalAppServices = iff(isnull(AppServiceCount), 0, AppServiceCount),
+    PublicApps = iff(isnull(PublicApps), 0, PublicApps),
+    AppsWithoutHttps = iff(isnull(NonHttpsApps), 0, NonHttpsApps),
+    AppsWithWeakTls = iff(isnull(WeakTlsApps), 0, WeakTlsApps),
+    RiskScore = case(
+        TotalAppServices == 0, 0,
+        PublicApps > 0 and DefenderStatus == "Disabled", 10,
+        PublicApps > 0, 5,
+        DefenderStatus == "Disabled", 3,
         1
     )
-| project
-    subscriptionName,
-    defenderStatus,
-    appServiceCount,
-    publicApps,
-    nonHttpsApps,
-    weakTlsApps,
-    riskScore
-| order by riskScore desc, appServiceCount desc
+| order by RiskScore desc, SubscriptionName asc
