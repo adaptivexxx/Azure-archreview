@@ -1,36 +1,40 @@
-resourcecontainers
-| where type == "microsoft.resources/subscriptions"
-| join kind=inner (
-    resourcecontainers
-    | where type == "microsoft.resources/subscriptions/resourcegroups"
-    | project subscriptionId, resourceGroup = name
+// Get Defender for App Services status per subscription
+securityresources
+| where type == "microsoft.security/pricings"
+| where name == "AppServices"
+| project subscriptionId, defenderStatus = tostring(properties.pricingTier)
+| join kind=leftouter (
+// Get App Services per subscription, with stack and plan info
+    resources
+    | where type =~ 'microsoft.web/sites'
+    | extend 
+        appServiceName = name,
+        appServicePlanId = tostring(properties.serverFarmId),
+        runtimeStack = tostring(properties.siteConfig.linuxFxVersion)
+    | join kind=leftouter (
+        resources
+        | where type =~ "microsoft.web/serverfarms"
+        | project 
+            appServicePlanId = id,
+            skuTier = tostring(sku.tier),
+            skuName = tostring(sku.name)
+    ) on appServicePlanId
+    | project subscriptionId, appServiceName, skuTier, skuName, runtimeStack
 ) on subscriptionId
 | join kind=inner (
-    resources
-    | where type == "microsoft.web/sites"
-    | extend AppServiceName = name, location, AppServicePlanId = tostring(properties.serverFarmId)
-) on subscriptionId, resourceGroup
-| join kind=leftouter (
     resourcecontainers
-    | where type == "microsoft.web/serverfarms"
-    | extend AppServicePlanId = id, SkuName = tostring(sku.name), SkuTier = tostring(sku.tier)
-    | project AppServicePlanId, SkuName, SkuTier
-) on AppServicePlanId
-| join kind=leftouter (
-    resources
-    | where type == "microsoft.security/pricings"
-    | where name == "AppServices"
-    | extend DefenderStatus = tostring(properties.pricingTier)
-    | project subscriptionId, DefenderStatus
+    | where type == "microsoft.resources/subscriptions"
+    | project subscriptionId, subscriptionName = name
 ) on subscriptionId
 | project
-    subscriptionId,
-    resourceGroup,
-    AppServiceName,
-    location,
-    SkuName,
-    SkuTier,
-    DefenderStatus,
-    RuntimeStack = tostring(properties.siteConfig.linuxFxVersion)
-| summarize Count = count() by subscriptionId, resourceGroup, AppServiceName, location, SkuName, SkuTier, DefenderStatus, RuntimeStack
-| order by DefenderStatus desc, AppServiceName
+    subscriptionName,
+    appServiceName = iff(isnull(appServiceName), "<No App Services>", appServiceName),
+    skuTier = iff(isnull(skuTier), "<Unknown>", skuTier),
+    skuName = iff(isnull(skuName), "<Unknown>", skuName),
+    runtimeStack = iff(isnull(runtimeStack), "<Unknown>", runtimeStack),
+    defenderStatus = case(
+        defenderStatus == "Standard", "Enabled",
+        defenderStatus == "Free", "Disabled",
+        "NotConfigured"
+    )
+| order by defenderStatus asc, subscriptionName, appServiceName
