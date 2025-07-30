@@ -1,26 +1,27 @@
-// Get Defender for App Services status per subscription
+// Step 1: Get Defender for App Services status
 securityresources
 | where type == "microsoft.security/pricings"
 | where name == "AppServices"
 | project subscriptionId, defenderStatus = tostring(properties.pricingTier)
 | join kind=leftouter (
-// Get App Services per subscription, with stack and plan info
+// Step 2: Load all App Service and App Service Plan data in one go
     resources
-    | where type =~ 'microsoft.web/sites'
+    | where type in~ ("microsoft.web/sites", "microsoft.web/serverfarms")
     | extend 
-        appServiceName = name,
-        appServicePlanId = tostring(properties.serverFarmId),
-        runtimeStack = tostring(properties.siteConfig.linuxFxVersion)
-    | join kind=leftouter (
-        resources
-        | where type =~ "microsoft.web/serverfarms"
-        | project 
-            appServicePlanId = id,
-            skuTier = tostring(sku.tier),
-            skuName = tostring(sku.name)
-    ) on appServicePlanId
-    | project subscriptionId, appServiceName, skuTier, skuName, runtimeStack
+        isSite = type == "microsoft.web/sites",
+        isPlan = type == "microsoft.web/serverfarms",
+        appServiceName = iff(isSite, name, ""),
+        appServicePlanId = iff(isSite, tostring(properties.serverFarmId), id),
+        runtimeStack = iff(isSite, tostring(properties.siteConfig.linuxFxVersion), ""),
+        skuTier = iff(isPlan, tostring(sku.tier), ""),
+        skuName = iff(isPlan, tostring(sku.name), "")
+    | project subscriptionId, appServiceName, appServicePlanId, runtimeStack, skuTier, skuName, type
 ) on subscriptionId
+| summarize
+    AppServices = make_list(pack_all())
+    by subscriptionId, defenderStatus
+| mv-expand AppServices
+| evaluate bag_unpack(AppServices)
 | join kind=inner (
     resourcecontainers
     | where type == "microsoft.resources/subscriptions"
@@ -28,10 +29,10 @@ securityresources
 ) on subscriptionId
 | project
     subscriptionName,
-    appServiceName = iff(isnull(appServiceName), "<No App Services>", appServiceName),
-    skuTier = iff(isnull(skuTier), "<Unknown>", skuTier),
-    skuName = iff(isnull(skuName), "<Unknown>", skuName),
-    runtimeStack = iff(isnull(runtimeStack), "<Unknown>", runtimeStack),
+    appServiceName = iff(isnull(appServiceName) or appServiceName == "", "<No App Services>", appServiceName),
+    skuTier = iff(isnull(skuTier) or skuTier == "", "<Unknown>", skuTier),
+    skuName = iff(isnull(skuName) or skuName == "", "<Unknown>", skuName),
+    runtimeStack = iff(isnull(runtimeStack) or runtimeStack == "", "<Unknown>", runtimeStack),
     defenderStatus = case(
         defenderStatus == "Standard", "Enabled",
         defenderStatus == "Free", "Disabled",
