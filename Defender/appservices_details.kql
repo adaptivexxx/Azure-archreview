@@ -1,31 +1,38 @@
-securityresources
+// Get Defender for App Services status per subscription
+let defenderStatus = securityresources
 | where type == "microsoft.security/pricings"
 | where name == "AppServices"
-| project subscriptionId, defenderStatus = properties.pricingTier
+| project subscriptionId, defenderStatus = case(
+    properties.pricingTier == "Standard", "Enabled",
+    properties.pricingTier == "Free", "Disabled",
+    "NotConfigured")
+| distinct subscriptionId, defenderStatus;
+
+// Get all App Services with basic security info
+let appServices = resources
+| where type =~ 'microsoft.web/sites'
+| project 
+    subscriptionId,
+    name,
+    resourceGroup,
+    kind,
+    location,
+    publicAccess = case(
+        isnotempty(properties.hostNames) and properties.hostNameSslStates[0].hostType == "Standard", 
+        "Public",
+        "Internal"),
+    httpsOnly = tobool(properties.httpsOnly),
+    minTlsVersion = properties.siteConfig.minTlsVersion;
+
+// Combine the data
+defenderStatus
 | join kind=leftouter (
-    resources
-    | where type =~ 'microsoft.web/sites'
-    | extend 
-        publicAccess = case(
-            isempty(properties.hostNames), "NoPublicHostname",
-            properties.hostNameSslStates[0].hostType == "Standard", "PubliclyAccessible",
-            "InternalOnly"
-        ),
-        httpsOnly = tobool(properties.httpsOnly),
-        minTlsVersion = properties.siteConfig.minTlsVersion,
-        ftpsState = properties.siteConfig.ftpsState,
-        clientCertEnabled = tobool(properties.clientCertEnabled),
-        osType = properties.kind contains "linux" ? "Linux" : "Windows",
-        appServicePlan = tostring(split(id, "/")[8])
+    appServices
     | summarize 
         appServiceCount = count(),
-        publicAppServices = countif(publicAccess == "PubliclyAccessible"),
-        linuxApps = countif(osType == "Linux"),
-        windowsApps = countif(osType == "Windows"),
+        publicApps = countif(publicAccess == "Public"),
         nonHttpsApps = countif(httpsOnly == false),
-        weakTlsApps = countif(minTlsVersion != "1.2"),
-        ftpsDisabled = countif(ftpsState != "FtpsOnly"),
-        appServicePlans = dcount(appServicePlan)
+        weakTlsApps = countif(minTlsVersion != "1.2")
         by subscriptionId
 ) on subscriptionId
 | join kind=inner (
@@ -35,23 +42,15 @@ securityresources
 ) on subscriptionId
 | project
     subscriptionName,
-    defenderStatus = case(
-        defenderStatus == "Standard", "Enabled",
-        defenderStatus == "Free", "Disabled",
-        "NotConfigured"
-    ),
+    defenderStatus,
     appServiceCount = iff(isnull(appServiceCount), 0, appServiceCount),
-    publicAppServices = iff(isnull(publicAppServices), 0, publicAppServices),
-    linuxApps = iff(isnull(linuxApps), 0, linuxApps),
-    windowsApps = iff(isnull(windowsApps), 0, windowsApps),
+    publicApps = iff(isnull(publicApps), 0, publicApps),
     nonHttpsApps = iff(isnull(nonHttpsApps), 0, nonHttpsApps),
     weakTlsApps = iff(isnull(weakTlsApps), 0, weakTlsApps),
-    ftpsDisabled = iff(isnull(ftpsDisabled), 0, ftpsDisabled),
-    appServicePlans = iff(isnull(appServicePlans), 0, appServicePlans),
     riskScore = case(
         appServiceCount == 0, 0,
-        publicAppServices > 0 and defenderStatus == "Disabled", 10,
-        publicAppServices > 0, 5,
+        publicApps > 0 and defenderStatus == "Disabled", 10,
+        publicApps > 0, 5,
         defenderStatus == "Disabled", 3,
         1
     )
