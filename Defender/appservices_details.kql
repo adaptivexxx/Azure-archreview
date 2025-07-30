@@ -1,28 +1,29 @@
-// Get Defender for App Services status per subscription
+// Get Defender for App Services status per subscription (VALIDATED)
 let defenderStatus = securityresources
 | where type == "microsoft.security/pricings"
 | where name == "AppServices"
-| project subscriptionId, defenderStatus = case(
-    properties.pricingTier == "Standard", "Enabled",
-    properties.pricingTier == "Free", "Disabled",
-    "NotConfigured")
+| extend defenderStatus = iff(properties.pricingTier == "Standard", "Enabled",
+                       iff(properties.pricingTier == "Free", "Disabled",
+                       "NotConfigured"))
 | distinct subscriptionId, defenderStatus;
 
 // Get all App Services with basic security info
 let appServices = resources
 | where type =~ 'microsoft.web/sites'
+| extend 
+    publicAccess = iff(isnotempty(properties.hostNames) and tostring(properties.hostNameSslStates[0].hostType) == "Standard", 
+        "Public", "Internal"),
+    httpsOnly = tobool(properties.httpsOnly),
+    minTlsVersion = tostring(properties.siteConfig.minTlsVersion)
 | project 
     subscriptionId,
     name,
     resourceGroup,
     kind,
     location,
-    publicAccess = case(
-        isnotempty(properties.hostNames) and properties.hostNameSslStates[0].hostType == "Standard", 
-        "Public",
-        "Internal"),
-    httpsOnly = tobool(properties.httpsOnly),
-    minTlsVersion = properties.siteConfig.minTlsVersion;
+    publicAccess,
+    httpsOnly,
+    minTlsVersion;
 
 // Combine the data
 defenderStatus
@@ -40,9 +41,7 @@ defenderStatus
     | where type == "microsoft.resources/subscriptions"
     | project subscriptionId, subscriptionName=name
 ) on subscriptionId
-| project
-    subscriptionName,
-    defenderStatus,
+| extend 
     appServiceCount = iff(isnull(appServiceCount), 0, appServiceCount),
     publicApps = iff(isnull(publicApps), 0, publicApps),
     nonHttpsApps = iff(isnull(nonHttpsApps), 0, nonHttpsApps),
@@ -54,4 +53,12 @@ defenderStatus
         defenderStatus == "Disabled", 3,
         1
     )
+| project
+    subscriptionName,
+    defenderStatus,
+    appServiceCount,
+    publicApps,
+    nonHttpsApps,
+    weakTlsApps,
+    riskScore
 | order by riskScore desc, appServiceCount desc
