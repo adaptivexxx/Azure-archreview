@@ -1,25 +1,42 @@
+// Step 1: Get Defender pricing for App Services
 let defenderInfo = securityresources
 | where type == "microsoft.security/pricings"
 | where name == "AppServices"
 | project subscriptionId, defenderStatus = tostring(properties.pricingTier);
 
+// Step 2: Use a single `resources` call to get both App Services and App Service Plans
 resources
-| where type in~ ("microsoft.web/sites", "microsoft.web/serverfarms")
-| extend
-    isSite = type == "microsoft.web/sites",
-    isPlan = type == "microsoft.web/serverfarms",
-    siteName = iff(isSite, name, ""),
-    planId = iff(isSite, tostring(properties.serverFarmId), id),
-    runtimeStack = iff(isSite, tostring(properties.siteConfig.linuxFxVersion), ""),
-    skuTier = iff(isPlan, tostring(sku.tier), ""),
-    skuName = iff(isPlan, tostring(sku.name), "")
+| where type =~ 'microsoft.web/sites' or type =~ 'microsoft.web/serverfarms'
+| project 
+    subscriptionId,
+    resourceGroup,
+    id,
+    name,
+    type,
+    serverFarmId = tostring(properties.serverFarmId),
+    skuTier = tostring(sku.tier),
+    skuName = tostring(sku.name),
+    runtimeStack = tostring(properties.siteConfig.linuxFxVersion),
+    location
+| extend 
+    isApp = type =~ 'microsoft.web/sites',
+    isPlan = type =~ 'microsoft.web/serverfarms'
 | summarize
-    siteName = make_list(siteName),
-    runtimeStack = make_list(runtimeStack),
-    skuTier = make_list(skuTier),
-    skuName = make_list(skuName)
-    by subscriptionId, planId
-| mv-expand siteName to typeof(string), runtimeStack to typeof(string), skuTier to typeof(string), skuName to typeof(string)
+    appServices = make_list(pack("name", name, "planId", serverFarmId, "runtime", runtimeStack, "location", location)),
+    appServicePlans = make_list(pack("id", id, "skuTier", skuTier, "skuName", skuName))
+    by subscriptionId
+| mv-expand app = appServices
+| extend 
+    appName = tostring(app.name),
+    appPlanId = tostring(app.planId),
+    runtime = tostring(app.runtime),
+    location = tostring(app.location)
+| join kind=leftouter (
+    // Flatten App Service Plan info
+    resources
+    | where type =~ 'microsoft.web/serverfarms'
+    | project planId = id, skuTier = tostring(sku.tier), skuName = tostring(sku.name)
+) on $left.appPlanId == $right.planId
 | join kind=leftouter (defenderInfo) on subscriptionId
 | join kind=inner (
     resourcecontainers
@@ -28,13 +45,14 @@ resources
 ) on subscriptionId
 | project
     subscriptionName,
-    siteName,
-    runtimeStack = iff(runtimeStack == "", "<Unknown>", runtimeStack),
-    skuTier = iff(skuTier == "", "<Unknown>", skuTier),
-    skuName = iff(skuName == "", "<Unknown>", skuName),
+    appName,
+    location,
+    runtime = iff(runtime == "", "<unknown>", runtime),
+    skuTier = iff(skuTier == "", "<unknown>", skuTier),
+    skuName = iff(skuName == "", "<unknown>", skuName),
     defenderStatus = case(
         defenderStatus =~ "Standard", "Enabled",
         defenderStatus =~ "Free", "Disabled",
         "NotConfigured"
     )
-| order by subscriptionName, siteName
+| order by defenderStatus asc, subscriptionName, appName
